@@ -22,6 +22,11 @@ const _descriptions = [
   'Winner of zero awards.\nBeloved by zero cats (they can\'t use phones).\nA triumph of the human spirit.',
   'Finally understand your cat\'s daily existential crisis.\nSpoiler: it\'s this.',
   'Rated 5★ by cats who can\'t type.\nA revolutionary study in futility and reflexes.',
+  'Ever wondered why your cat is willing to sprint across the house at 3 a.m. for a tiny red dot?',
+  'Experience life as a cat: dedicate your entire existence to the pursuit of an unattainable laser dot.',
+  'For years, your cat has chased the laser dot.\nNow it\'s your turn.',
+  'Become the cat. Chase the dot. Question your life choices. Chase the dot again.',
+  'They say you should put yourself in someone else\'s shoes.\nThis game puts you in your cat\'s paws.',
 ];
 
 class StartScreen extends StatefulWidget {
