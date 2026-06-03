@@ -1,0 +1,64 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build web
+        run: flutter build web --release --pwa-strategy=none --base-href "/${{ github.event.repository.name }}/"
+
+      - name: Version-stamp bootstrap reference
+        run: |
+          sed -i "s|flutter_bootstrap.js\"|flutter_bootstrap.js?v=${{ github.run_number }}\"|g" build/web/index.html
+
+      - name: Inject kill-switch service worker
+        run: |
+          cat > build/web/flutter_service_worker.js << 'EOF'
+          self.addEventListener('install', () => self.skipWaiting());
+          self.addEventListener('activate', event => {
+            event.waitUntil(
+              caches.keys()
+                .then(keys => Promise.all(keys.map(k => caches.delete(k))))
+                .then(() => self.clients.claim())
+                .then(() => self.registration.unregister())
+            );
+          });
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
