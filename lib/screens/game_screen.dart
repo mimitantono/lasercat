@@ -1,0 +1,424 @@
+import 'dart:async';
+import 'dart:math';
+import 'package:flutter/material.dart';
+import '../painters/laser_painter.dart';
+
+// ── Laser movement state machine ──────────────────────────────────────────────
+
+enum _LaserState { pause, creep, dart, tease }
+
+class _LaserBehaviour {
+  final _LaserState state;
+  final Duration duration;
+  final Offset? target; // null = stay put
+
+  const _LaserBehaviour(this.state, this.duration, [this.target]);
+}
+
+// ── Game screen ───────────────────────────────────────────────────────────────
+
+class GameScreen extends StatefulWidget {
+  const GameScreen({super.key});
+
+  @override
+  State<GameScreen> createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen>
+    with SingleTickerProviderStateMixin {
+  static const _tapRadius = 52.0; // generous hit area
+
+  final _rng = Random();
+
+  // Laser position — animated
+  late AnimationController _moveCtrl;
+  late Animation<Offset> _moveAnim;
+
+  Offset _current = const Offset(200, 400);
+  Offset _target = const Offset(200, 400);
+  Size _arenaSize = Size.zero;
+
+  // Game state
+  int _score = 0;
+  int _combo = 0;
+  int _highScore = 0;
+  bool _started = false;
+  bool _gameOver = false;
+  double _timeLeft = 30;
+
+  Timer? _gameTimer;
+  Timer? _behaviourTimer;
+
+  // Combo flash
+  String? _flashLabel;
+  double _flashOpacity = 0;
+  Timer? _flashTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _moveCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
+    _moveAnim = AlwaysStoppedAnimation(_current);
+    _moveCtrl.addListener(() {
+      setState(() => _current = _moveAnim.value);
+    });
+  }
+
+  // ── Behaviour scheduling ──────────────────────────────────────────────────
+
+  void _scheduleBehaviour() {
+    if (_gameOver) return;
+    final behaviour = _nextBehaviour();
+    if (behaviour.target != null) {
+      _animateTo(behaviour.target!, behaviour.duration);
+    }
+    _behaviourTimer = Timer(behaviour.duration, _scheduleBehaviour);
+  }
+
+  _LaserBehaviour _nextBehaviour() {
+    final speedMult = _speedMultiplier();
+    final roll = _rng.nextDouble();
+
+    if (roll < 0.20) {
+      // Pause — sit still and lure
+      return _LaserBehaviour(_LaserState.pause, Duration(milliseconds: (700 / speedMult).round()));
+    } else if (roll < 0.50) {
+      // Creep — slow drift
+      return _LaserBehaviour(
+        _LaserState.creep,
+        Duration(milliseconds: (900 / speedMult).round()),
+        _randomPoint(maxStep: 0.25),
+      );
+    } else if (roll < 0.80) {
+      // Dart — quick zip to a far point
+      return _LaserBehaviour(
+        _LaserState.dart,
+        Duration(milliseconds: (220 / speedMult).round()),
+        _randomPoint(minStep: 0.30),
+      );
+    } else {
+      // Tease — dart a tiny bit then immediately dart back
+      final micro = _randomPoint(maxStep: 0.12);
+      _animateTo(micro, Duration(milliseconds: (120 / speedMult).round()));
+      return _LaserBehaviour(
+        _LaserState.tease,
+        Duration(milliseconds: (260 / speedMult).round()),
+        _target, // dart back to where we came from
+      );
+    }
+  }
+
+  double _speedMultiplier() {
+    final elapsed = 30 - _timeLeft;
+    // Ramps from 1.0 at start to 2.2 at end
+    return 1.0 + (elapsed / 30) * 1.2;
+  }
+
+  Offset _randomPoint({double minStep = 0, double maxStep = 1.0}) {
+    if (_arenaSize == Size.zero) return _target;
+    final w = _arenaSize.width;
+    final h = _arenaSize.height;
+    const margin = 40.0;
+
+    Offset candidate;
+    int tries = 0;
+    do {
+      candidate = Offset(
+        margin + _rng.nextDouble() * (w - margin * 2),
+        margin + _rng.nextDouble() * (h - margin * 2),
+      );
+      tries++;
+    } while (tries < 20 && _stepRatio(candidate) < minStep && _stepRatio(candidate) > maxStep);
+
+    return candidate;
+  }
+
+  double _stepRatio(Offset point) {
+    if (_arenaSize == Size.zero) return 0;
+    final d = (_current - point).distance;
+    final maxD = sqrt(_arenaSize.width * _arenaSize.width + _arenaSize.height * _arenaSize.height);
+    return d / maxD;
+  }
+
+  void _animateTo(Offset dest, Duration dur) {
+    _target = dest;
+    _moveAnim = Tween<Offset>(begin: _current, end: dest).animate(
+      CurvedAnimation(parent: _moveCtrl, curve: Curves.easeInOut),
+    );
+    _moveCtrl.duration = dur;
+    _moveCtrl.forward(from: 0);
+  }
+
+  // ── Game lifecycle ────────────────────────────────────────────────────────
+
+  void _startGame() {
+    setState(() {
+      _score = 0;
+      _combo = 0;
+      _timeLeft = 30;
+      _started = true;
+      _gameOver = false;
+    });
+
+    // Place laser in centre of arena
+    if (_arenaSize != Size.zero) {
+      _current = Offset(_arenaSize.width / 2, _arenaSize.height / 2);
+      _target = _current;
+    }
+
+    _scheduleBehaviour();
+
+    _gameTimer = Timer.periodic(const Duration(milliseconds: 100), (t) {
+      setState(() => _timeLeft = (_timeLeft - 0.1).clamp(0, 30));
+      if (_timeLeft <= 0) {
+        t.cancel();
+        _endGame();
+      }
+    });
+  }
+
+  void _endGame() {
+    _behaviourTimer?.cancel();
+    _moveCtrl.stop();
+    final newHigh = _score > _highScore;
+    if (newHigh) _highScore = _score;
+    setState(() => _gameOver = true);
+  }
+
+  // ── Tap handling ──────────────────────────────────────────────────────────
+
+  void _onTap(TapUpDetails details) {
+    if (!_started || _gameOver) return;
+    final pos = details.localPosition;
+    final dist = (pos - _current).distance;
+
+    if (dist <= _tapRadius) {
+      _combo++;
+      final points = _comboPoints();
+      setState(() => _score += points);
+      _showFlash(points);
+    } else {
+      _combo = 0;
+    }
+  }
+
+  int _comboPoints() {
+    if (_combo >= 10) return 5;
+    if (_combo >= 5) return 3;
+    if (_combo >= 3) return 2;
+    return 1;
+  }
+
+  void _showFlash(int points) {
+    final label = _combo >= 5 ? '+$points 🔥' : '+$points';
+    _flashTimer?.cancel();
+    setState(() {
+      _flashLabel = label;
+      _flashOpacity = 1.0;
+    });
+    _flashTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) setState(() => _flashOpacity = 0);
+    });
+  }
+
+  @override
+  void dispose() {
+    _moveCtrl.dispose();
+    _gameTimer?.cancel();
+    _behaviourTimer?.cancel();
+    _flashTimer?.cancel();
+    super.dispose();
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D0D),
+      body: SafeArea(
+        child: Column(
+          children: [
+            _TopBar(score: _score, highScore: _highScore, timeLeft: _timeLeft, started: _started && !_gameOver),
+            Expanded(
+              child: LayoutBuilder(builder: (context, constraints) {
+                _arenaSize = Size(constraints.maxWidth, constraints.maxHeight);
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: _onTap,
+                  child: Stack(
+                    children: [
+                      // Subtle floor texture
+                      Container(
+                        decoration: const BoxDecoration(
+                          gradient: RadialGradient(
+                            center: Alignment.center,
+                            radius: 1.2,
+                            colors: [Color(0xFF1A1A1A), Color(0xFF0A0A0A)],
+                          ),
+                        ),
+                      ),
+                      // Laser dot
+                      if (_started && !_gameOver)
+                        CustomPaint(
+                          size: Size(constraints.maxWidth, constraints.maxHeight),
+                          painter: LaserPainter(position: _current),
+                        ),
+                      // Combo flash
+                      if (_flashLabel != null)
+                        Positioned(
+                          left: _current.dx - 40,
+                          top: _current.dy - 60,
+                          child: AnimatedOpacity(
+                            opacity: _flashOpacity,
+                            duration: const Duration(milliseconds: 300),
+                            child: Text(
+                              _flashLabel!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                shadows: [Shadow(color: Colors.red, blurRadius: 8)],
+                              ),
+                            ),
+                          ),
+                        ),
+                      // Overlay: start or game over
+                      if (!_started || _gameOver)
+                        _Overlay(
+                          gameOver: _gameOver,
+                          score: _score,
+                          highScore: _highScore,
+                          isNewHigh: _gameOver && _score >= _highScore && _score > 0,
+                          onStart: _startGame,
+                        ),
+                    ],
+                  ),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Top bar ───────────────────────────────────────────────────────────────────
+
+class _TopBar extends StatelessWidget {
+  final int score;
+  final int highScore;
+  final double timeLeft;
+  final bool started;
+
+  const _TopBar({required this.score, required this.highScore, required this.timeLeft, required this.started});
+
+  @override
+  Widget build(BuildContext context) {
+    final urgentColor = timeLeft < 8 ? Colors.red : Colors.white;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('SCORE', style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1.5)),
+            Text('$score', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+          ]),
+          if (started)
+            Column(children: [
+              Text(
+                timeLeft.toStringAsFixed(1),
+                style: TextStyle(color: urgentColor, fontSize: 32, fontWeight: FontWeight.bold,
+                  shadows: timeLeft < 8 ? [const Shadow(color: Colors.red, blurRadius: 12)] : null,
+                ),
+              ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 100),
+                width: 120 * (timeLeft / 30),
+                height: 3,
+                decoration: BoxDecoration(
+                  color: urgentColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ]),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            const Text('BEST', style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1.5)),
+            Text('$highScore', style: const TextStyle(color: Colors.amber, fontSize: 28, fontWeight: FontWeight.bold)),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Overlay ───────────────────────────────────────────────────────────────────
+
+class _Overlay extends StatelessWidget {
+  final bool gameOver;
+  final int score;
+  final int highScore;
+  final bool isNewHigh;
+  final VoidCallback onStart;
+
+  const _Overlay({
+    required this.gameOver,
+    required this.score,
+    required this.highScore,
+    required this.isNewHigh,
+    required this.onStart,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.75),
+      child: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(
+            gameOver ? '🐱' : '😸',
+            style: const TextStyle(fontSize: 72),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            gameOver ? 'Time\'s up!' : 'Laser Cat',
+            style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 2),
+          ),
+          if (gameOver) ...[
+            const SizedBox(height: 8),
+            Text('$score pts', style: const TextStyle(color: Colors.amber, fontSize: 48, fontWeight: FontWeight.bold)),
+            if (isNewHigh)
+              const Text('New best! 🔥', style: TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Best: $highScore', style: const TextStyle(color: Colors.white38, fontSize: 16)),
+          ] else ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Tap the laser dot\nCombo for bonus points!',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white54, fontSize: 16, height: 1.5),
+            ),
+          ],
+          const SizedBox(height: 32),
+          SizedBox(
+            width: 200,
+            height: 52,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF1744),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              onPressed: onStart,
+              child: Text(
+                gameOver ? 'PLAY AGAIN' : 'PLAY',
+                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
