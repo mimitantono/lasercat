@@ -197,7 +197,10 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _onTapUp(TapUpDetails details) {
-    if (kIsWeb) _pawCtrl.reverse();
+    if (kIsWeb) {
+      _pawCtrl.reverse();
+      setState(() => _mousePos = null);
+    }
     if (_gameOver) return;
 
     final pos = details.localPosition;
@@ -219,7 +222,10 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _onTapCancel() {
-    if (kIsWeb) _pawCtrl.reverse();
+    if (kIsWeb) {
+      _pawCtrl.reverse();
+      setState(() => _mousePos = null);
+    }
   }
 
   int _comboPoints() {
