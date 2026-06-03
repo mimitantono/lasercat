@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../painters/laser_painter.dart';
+import '../services/sound_service.dart';
 
 // ── Laser movement state machine ──────────────────────────────────────────────
 
@@ -18,7 +19,8 @@ class _LaserBehaviour {
 // ── Game screen ───────────────────────────────────────────────────────────────
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key});
+  final SoundService sounds;
+  const GameScreen({super.key, required this.sounds});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -42,7 +44,6 @@ class _GameScreenState extends State<GameScreen>
   int _score = 0;
   int _combo = 0;
   int _highScore = 0;
-  bool _started = false;
   bool _gameOver = false;
   double _timeLeft = 30;
 
@@ -62,6 +63,8 @@ class _GameScreenState extends State<GameScreen>
     _moveCtrl.addListener(() {
       setState(() => _current = _moveAnim.value);
     });
+    // Auto-start after first frame so arena size is known
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startGame());
   }
 
   // ── Behaviour scheduling ──────────────────────────────────────────────────
@@ -156,7 +159,6 @@ class _GameScreenState extends State<GameScreen>
       _score = 0;
       _combo = 0;
       _timeLeft = 30;
-      _started = true;
       _gameOver = false;
     });
 
@@ -180,15 +182,15 @@ class _GameScreenState extends State<GameScreen>
   void _endGame() {
     _behaviourTimer?.cancel();
     _moveCtrl.stop();
-    final newHigh = _score > _highScore;
-    if (newHigh) _highScore = _score;
+    if (_score > _highScore) _highScore = _score;
+    widget.sounds.playMeow();
     setState(() => _gameOver = true);
   }
 
   // ── Tap handling ──────────────────────────────────────────────────────────
 
   void _onTap(TapUpDetails details) {
-    if (!_started || _gameOver) return;
+    if (_gameOver) return;
     final pos = details.localPosition;
     final dist = (pos - _current).distance;
 
@@ -196,6 +198,11 @@ class _GameScreenState extends State<GameScreen>
       _combo++;
       final points = _comboPoints();
       setState(() => _score += points);
+      if (_combo == 5 || _combo == 10) {
+        widget.sounds.playCombo();
+      } else {
+        widget.sounds.playHit();
+      }
       _showFlash(points);
     } else {
       _combo = 0;
@@ -239,7 +246,7 @@ class _GameScreenState extends State<GameScreen>
       body: SafeArea(
         child: Column(
           children: [
-            _TopBar(score: _score, highScore: _highScore, timeLeft: _timeLeft, started: _started && !_gameOver),
+            _TopBar(score: _score, highScore: _highScore, timeLeft: _timeLeft, started: !_gameOver),
             Expanded(
               child: LayoutBuilder(builder: (context, constraints) {
                 _arenaSize = Size(constraints.maxWidth, constraints.maxHeight);
@@ -248,7 +255,6 @@ class _GameScreenState extends State<GameScreen>
                   onTapUp: _onTap,
                   child: Stack(
                     children: [
-                      // Subtle floor texture
                       Container(
                         decoration: const BoxDecoration(
                           gradient: RadialGradient(
@@ -258,13 +264,11 @@ class _GameScreenState extends State<GameScreen>
                           ),
                         ),
                       ),
-                      // Laser dot
-                      if (_started && !_gameOver)
+                      if (!_gameOver)
                         CustomPaint(
                           size: Size(constraints.maxWidth, constraints.maxHeight),
                           painter: LaserPainter(position: _current),
                         ),
-                      // Combo flash
                       if (_flashLabel != null)
                         Positioned(
                           left: _current.dx - 40,
@@ -283,14 +287,13 @@ class _GameScreenState extends State<GameScreen>
                             ),
                           ),
                         ),
-                      // Overlay: start or game over
-                      if (!_started || _gameOver)
-                        _Overlay(
-                          gameOver: _gameOver,
+                      if (_gameOver)
+                        _GameOverOverlay(
                           score: _score,
                           highScore: _highScore,
-                          isNewHigh: _gameOver && _score >= _highScore && _score > 0,
-                          onStart: _startGame,
+                          isNewHigh: _score > 0 && _score >= _highScore,
+                          onPlayAgain: _startGame,
+                          onMenu: () => Navigator.pop(context),
                         ),
                     ],
                   ),
@@ -354,53 +357,41 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-// ── Overlay ───────────────────────────────────────────────────────────────────
+// ── Game over overlay ─────────────────────────────────────────────────────────
 
-class _Overlay extends StatelessWidget {
-  final bool gameOver;
+class _GameOverOverlay extends StatelessWidget {
   final int score;
   final int highScore;
   final bool isNewHigh;
-  final VoidCallback onStart;
+  final VoidCallback onPlayAgain;
+  final VoidCallback onMenu;
 
-  const _Overlay({
-    required this.gameOver,
+  const _GameOverOverlay({
     required this.score,
     required this.highScore,
     required this.isNewHigh,
-    required this.onStart,
+    required this.onPlayAgain,
+    required this.onMenu,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.black.withValues(alpha: 0.75),
+      color: Colors.black.withValues(alpha: 0.80),
       child: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(
-            gameOver ? '🐱' : '😸',
-            style: const TextStyle(fontSize: 72),
+          const Text('🐱', style: TextStyle(fontSize: 72)),
+          const SizedBox(height: 12),
+          const Text(
+            'Time\'s up!',
+            style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 2),
           ),
           const SizedBox(height: 12),
-          Text(
-            gameOver ? 'Time\'s up!' : 'Laser Cat',
-            style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 2),
-          ),
-          if (gameOver) ...[
-            const SizedBox(height: 8),
-            Text('$score pts', style: const TextStyle(color: Colors.amber, fontSize: 48, fontWeight: FontWeight.bold)),
-            if (isNewHigh)
-              const Text('New best! 🔥', style: TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text('Best: $highScore', style: const TextStyle(color: Colors.white38, fontSize: 16)),
-          ] else ...[
-            const SizedBox(height: 8),
-            const Text(
-              'Tap the laser dot\nCombo for bonus points!',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white54, fontSize: 16, height: 1.5),
-            ),
-          ],
+          Text('$score pts', style: const TextStyle(color: Colors.amber, fontSize: 52, fontWeight: FontWeight.bold)),
+          if (isNewHigh)
+            const Text('New best! 🔥', style: TextStyle(color: Colors.orange, fontSize: 18, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text('Best: $highScore', style: const TextStyle(color: Colors.white38, fontSize: 16)),
           const SizedBox(height: 32),
           SizedBox(
             width: 200,
@@ -410,12 +401,14 @@ class _Overlay extends StatelessWidget {
                 backgroundColor: const Color(0xFFFF1744),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              onPressed: onStart,
-              child: Text(
-                gameOver ? 'PLAY AGAIN' : 'PLAY',
-                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2),
-              ),
+              onPressed: onPlayAgain,
+              child: const Text('PLAY AGAIN', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2)),
             ),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: onMenu,
+            child: const Text('Menu', style: TextStyle(color: Colors.white38, fontSize: 15)),
           ),
         ]),
       ),

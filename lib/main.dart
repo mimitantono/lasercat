@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'screens/game_screen.dart';
+import 'screens/start_screen.dart';
+import 'services/sound_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,8 +13,27 @@ void main() {
   runApp(const LaserCatApp());
 }
 
-class LaserCatApp extends StatelessWidget {
+class LaserCatApp extends StatefulWidget {
   const LaserCatApp({super.key});
+
+  @override
+  State<LaserCatApp> createState() => _LaserCatAppState();
+}
+
+class _LaserCatAppState extends State<LaserCatApp> {
+  final _sounds = SoundService();
+
+  @override
+  void initState() {
+    super.initState();
+    _sounds.init();
+  }
+
+  @override
+  void dispose() {
+    _sounds.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +47,7 @@ class LaserCatApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const GameScreen(),
+      home: StartScreen(sounds: _sounds),
     );
   }
 }
