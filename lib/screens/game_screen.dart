@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../painters/laser_painter.dart';
+import '../painters/paw_painter.dart';
 import '../services/sound_service.dart';
 
 // ── Laser movement state machine ──────────────────────────────────────────────
@@ -11,7 +13,7 @@ enum _LaserState { pause, creep, dart, tease }
 class _LaserBehaviour {
   final _LaserState state;
   final Duration duration;
-  final Offset? target; // null = stay put
+  final Offset? target;
 
   const _LaserBehaviour(this.state, this.duration, [this.target]);
 }
@@ -27,18 +29,24 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen>
-    with SingleTickerProviderStateMixin {
-  static const _tapRadius = 52.0; // generous hit area
+    with TickerProviderStateMixin {
+  // Larger hit radius on web — mouse is harder to aim than a finger
+  static const _tapRadius = kIsWeb ? 68.0 : 52.0;
+  static const _pawSize   = 68.0;
 
   final _rng = Random();
 
-  // Laser position — animated
+  // Laser position
   late AnimationController _moveCtrl;
   late Animation<Offset> _moveAnim;
-
   Offset _current = const Offset(200, 400);
-  Offset _target = const Offset(200, 400);
+  Offset _target  = const Offset(200, 400);
   Size _arenaSize = Size.zero;
+
+  // Paw cursor (web only)
+  Offset? _mousePos;
+  late AnimationController _pawCtrl;
+  late Animation<double> _pawScale;
 
   // Game state
   int _score = 0;
@@ -60,10 +68,13 @@ class _GameScreenState extends State<GameScreen>
     super.initState();
     _moveCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
     _moveAnim = AlwaysStoppedAnimation(_current);
-    _moveCtrl.addListener(() {
-      setState(() => _current = _moveAnim.value);
-    });
-    // Auto-start after first frame so arena size is known
+    _moveCtrl.addListener(() => setState(() => _current = _moveAnim.value));
+
+    _pawCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 120));
+    _pawScale = Tween<double>(begin: 1.0, end: 0.65).animate(
+      CurvedAnimation(parent: _pawCtrl, curve: Curves.easeIn),
+    );
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _startGame());
   }
 
@@ -83,37 +94,32 @@ class _GameScreenState extends State<GameScreen>
     final roll = _rng.nextDouble();
 
     if (roll < 0.20) {
-      // Pause — sit still and lure
       return _LaserBehaviour(_LaserState.pause, Duration(milliseconds: (700 / speedMult).round()));
     } else if (roll < 0.50) {
-      // Creep — slow drift
       return _LaserBehaviour(
         _LaserState.creep,
         Duration(milliseconds: (900 / speedMult).round()),
         _randomPoint(maxStep: 0.25),
       );
     } else if (roll < 0.80) {
-      // Dart — quick zip to a far point
       return _LaserBehaviour(
         _LaserState.dart,
         Duration(milliseconds: (220 / speedMult).round()),
         _randomPoint(minStep: 0.30),
       );
     } else {
-      // Tease — dart a tiny bit then immediately dart back
       final micro = _randomPoint(maxStep: 0.12);
       _animateTo(micro, Duration(milliseconds: (120 / speedMult).round()));
       return _LaserBehaviour(
         _LaserState.tease,
         Duration(milliseconds: (260 / speedMult).round()),
-        _target, // dart back to where we came from
+        _target,
       );
     }
   }
 
   double _speedMultiplier() {
     final elapsed = 30 - _timeLeft;
-    // Ramps from 1.0 at start to 2.2 at end
     return 1.0 + (elapsed / 30) * 1.2;
   }
 
@@ -122,7 +128,6 @@ class _GameScreenState extends State<GameScreen>
     final w = _arenaSize.width;
     final h = _arenaSize.height;
     const margin = 40.0;
-
     Offset candidate;
     int tries = 0;
     do {
@@ -132,7 +137,6 @@ class _GameScreenState extends State<GameScreen>
       );
       tries++;
     } while (tries < 20 && _stepRatio(candidate) < minStep && _stepRatio(candidate) > maxStep);
-
     return candidate;
   }
 
@@ -162,7 +166,6 @@ class _GameScreenState extends State<GameScreen>
       _gameOver = false;
     });
 
-    // Place laser in centre of arena
     if (_arenaSize != Size.zero) {
       _current = Offset(_arenaSize.width / 2, _arenaSize.height / 2);
       _target = _current;
@@ -187,10 +190,16 @@ class _GameScreenState extends State<GameScreen>
     setState(() => _gameOver = true);
   }
 
-  // ── Tap handling ──────────────────────────────────────────────────────────
+  // ── Tap / mouse handling ──────────────────────────────────────────────────
 
-  void _onTap(TapUpDetails details) {
+  void _onTapDown(TapDownDetails _) {
+    if (kIsWeb) _pawCtrl.forward(from: 0);
+  }
+
+  void _onTapUp(TapUpDetails details) {
+    if (kIsWeb) _pawCtrl.reverse();
     if (_gameOver) return;
+
     final pos = details.localPosition;
     final dist = (pos - _current).distance;
 
@@ -207,6 +216,10 @@ class _GameScreenState extends State<GameScreen>
     } else {
       _combo = 0;
     }
+  }
+
+  void _onTapCancel() {
+    if (kIsWeb) _pawCtrl.reverse();
   }
 
   int _comboPoints() {
@@ -231,6 +244,7 @@ class _GameScreenState extends State<GameScreen>
   @override
   void dispose() {
     _moveCtrl.dispose();
+    _pawCtrl.dispose();
     _gameTimer?.cancel();
     _behaviourTimer?.cancel();
     _flashTimer?.cancel();
@@ -250,9 +264,12 @@ class _GameScreenState extends State<GameScreen>
             Expanded(
               child: LayoutBuilder(builder: (context, constraints) {
                 _arenaSize = Size(constraints.maxWidth, constraints.maxHeight);
-                return GestureDetector(
+
+                Widget arena = GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTapUp: _onTap,
+                  onTapDown: _onTapDown,
+                  onTapUp: _onTapUp,
+                  onTapCancel: _onTapCancel,
                   child: Stack(
                     children: [
                       Container(
@@ -287,6 +304,24 @@ class _GameScreenState extends State<GameScreen>
                             ),
                           ),
                         ),
+                      // Web paw cursor
+                      if (kIsWeb && _mousePos != null && !_gameOver)
+                        Positioned(
+                          left: _mousePos!.dx - _pawSize / 2,
+                          top: _mousePos!.dy - _pawSize / 2,
+                          child: IgnorePointer(
+                            child: AnimatedBuilder(
+                              animation: _pawScale,
+                              builder: (_, child) => Transform.scale(
+                                scale: _pawScale.value,
+                                child: CustomPaint(
+                                  size: const Size(_pawSize, _pawSize),
+                                  painter: PawPainter(opacity: 0.75),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       if (_gameOver)
                         _GameOverOverlay(
                           score: _score,
@@ -298,6 +333,18 @@ class _GameScreenState extends State<GameScreen>
                     ],
                   ),
                 );
+
+                // On web: wrap in MouseRegion to track position and hide system cursor
+                if (kIsWeb) {
+                  arena = MouseRegion(
+                    cursor: SystemMouseCursors.none,
+                    onHover: (e) => setState(() => _mousePos = e.localPosition),
+                    onExit: (_) => setState(() => _mousePos = null),
+                    child: arena,
+                  );
+                }
+
+                return arena;
               }),
             ),
           ],
@@ -333,7 +380,10 @@ class _TopBar extends StatelessWidget {
             Column(children: [
               Text(
                 timeLeft.toStringAsFixed(1),
-                style: TextStyle(color: urgentColor, fontSize: 32, fontWeight: FontWeight.bold,
+                style: TextStyle(
+                  color: urgentColor,
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
                   shadows: timeLeft < 8 ? [const Shadow(color: Colors.red, blurRadius: 12)] : null,
                 ),
               ),
@@ -402,7 +452,8 @@ class _GameOverOverlay extends StatelessWidget {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
               onPressed: onPlayAgain,
-              child: const Text('PLAY AGAIN', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2)),
+              child: const Text('PLAY AGAIN',
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2)),
             ),
           ),
           const SizedBox(height: 12),
