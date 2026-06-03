@@ -18,19 +18,20 @@ class SoundService {
     for (final p in [..._hitPool, ..._comboPool, ..._meowPool]) {
       p.setReleaseMode(ReleaseMode.stop);
     }
-    await Future.wait([
-      ..._hitPool.map((p)   => p.setSource(AssetSource('sounds/hit.ogg'))),
-      ..._comboPool.map((p) => p.setSource(AssetSource('sounds/combo.ogg'))),
-      ..._meowPool.map((p)  => p.setSource(AssetSource('sounds/meow.ogg'))),
-    ]);
   }
 
+  // Call inside a user gesture (e.g. button tap) to unlock the Web Audio
+  // AudioContext and pre-cache every sound so the first real play is instant.
   Future<void> warmUp() async {
     if (_muted) return;
     try {
-      for (final p in [..._hitPool, ..._comboPool, ..._meowPool]) {
+      for (final (p, src) in [
+        (_hitPool[0],   'sounds/hit.ogg'),
+        (_comboPool[0], 'sounds/combo.ogg'),
+        (_meowPool[0],  'sounds/meow.ogg'),
+      ]) {
         await p.setVolume(0);
-        await p.resume();
+        await p.play(AssetSource(src));
         await p.stop();
         await p.setVolume(1);
       }
