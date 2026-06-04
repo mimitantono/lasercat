@@ -34,8 +34,13 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  audioplayers: ^6.7.0
+  audioplayers: 6.6.0
   shared_preferences: ^2.5.5
+
+# audioplayers_web 5.2.1 has a regression that uses dart:io on web,
+# breaking AssetSource playback. Pin to 5.2.0 until upstream is fixed.
+dependency_overrides:
+  audioplayers_web: 5.2.0
 
 dev_dependencies:
   flutter_test:
