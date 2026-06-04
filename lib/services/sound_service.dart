@@ -1,4 +1,5 @@
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SoundService {
@@ -18,15 +19,21 @@ class SoundService {
     for (final p in [..._hitPool, ..._comboPool, ..._meowPool]) {
       p.setReleaseMode(ReleaseMode.stop);
     }
-    await Future.wait([
-      ..._hitPool.map((p)   => p.setSource(AssetSource('sounds/hit.ogg'))),
-      ..._comboPool.map((p) => p.setSource(AssetSource('sounds/combo.ogg'))),
-      ..._meowPool.map((p)  => p.setSource(AssetSource('sounds/meow.ogg'))),
-    ]);
+    try {
+      await Future.wait([
+        ..._hitPool.map((p)   => p.setSource(AssetSource('sounds/hit.ogg'))),
+        ..._comboPool.map((p) => p.setSource(AssetSource('sounds/combo.ogg'))),
+        ..._meowPool.map((p)  => p.setSource(AssetSource('sounds/meow.ogg'))),
+      ]);
+      debugPrint('[SoundService] init: all sources loaded');
+    } catch (e, st) {
+      debugPrint('[SoundService] init FAILED: $e\n$st');
+    }
   }
 
   Future<void> warmUp() async {
     if (_muted) return;
+    debugPrint('[SoundService] warmUp start');
     try {
       for (final p in [..._hitPool, ..._comboPool, ..._meowPool]) {
         await p.setVolume(0);
@@ -34,7 +41,10 @@ class SoundService {
         await p.stop();
         await p.setVolume(1);
       }
-    } catch (_) {}
+      debugPrint('[SoundService] warmUp done');
+    } catch (e, st) {
+      debugPrint('[SoundService] warmUp FAILED: $e\n$st');
+    }
   }
 
   void toggleMute() {
@@ -45,19 +55,28 @@ class SoundService {
   void playHit() {
     if (_muted) return;
     _hi = (_hi + 1) % _hitPool.length;
-    _hitPool[_hi].play(AssetSource('sounds/hit.ogg'));
+    _hitPool[_hi].play(AssetSource('sounds/hit.ogg')).then(
+      (_) => debugPrint('[SoundService] playHit ok'),
+      onError: (e) => debugPrint('[SoundService] playHit FAILED: $e'),
+    );
   }
 
   void playCombo() {
     if (_muted) return;
     _ci = (_ci + 1) % _comboPool.length;
-    _comboPool[_ci].play(AssetSource('sounds/combo.ogg'));
+    _comboPool[_ci].play(AssetSource('sounds/combo.ogg')).then(
+      (_) => debugPrint('[SoundService] playCombo ok'),
+      onError: (e) => debugPrint('[SoundService] playCombo FAILED: $e'),
+    );
   }
 
   void playMeow() {
     if (_muted) return;
     _mi = (_mi + 1) % _meowPool.length;
-    _meowPool[_mi].play(AssetSource('sounds/meow.ogg'));
+    _meowPool[_mi].play(AssetSource('sounds/meow.ogg')).then(
+      (_) => debugPrint('[SoundService] playMeow ok'),
+      onError: (e) => debugPrint('[SoundService] playMeow FAILED: $e'),
+    );
   }
 
   void dispose() {
