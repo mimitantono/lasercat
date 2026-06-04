@@ -26,7 +26,7 @@ class _LaserCatAppState extends State<LaserCatApp> {
   @override
   void initState() {
     super.initState();
-    _sounds.init();
+    _sounds.init().then((_) { if (mounted) setState(() {}); });
   }
 
   @override

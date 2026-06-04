@@ -30,9 +30,16 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen>
     with TickerProviderStateMixin {
-  // Larger hit radius on web — mouse is harder to aim than a finger
-  static const _tapRadius = kIsWeb ? 68.0 : 52.0;
-  static const _pawSize   = 68.0;
+  // Paw cursor only on desktop web — mobile web synthesises hover from touch
+  // which makes the paw stick to the last touch position.
+  static final bool _isDesktopWeb = kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+       defaultTargetPlatform == TargetPlatform.linux ||
+       defaultTargetPlatform == TargetPlatform.macOS);
+
+  // Larger hit radius on desktop web — mouse is harder to aim than a finger
+  static final double _tapRadius = _isDesktopWeb ? 68.0 : 52.0;
+  static const _pawSize = 68.0;
 
   final _rng = Random();
 
@@ -193,14 +200,11 @@ class _GameScreenState extends State<GameScreen>
   // ── Tap / mouse handling ──────────────────────────────────────────────────
 
   void _onTapDown(TapDownDetails _) {
-    if (kIsWeb) _pawCtrl.forward(from: 0);
+    if (_isDesktopWeb) _pawCtrl.forward(from: 0);
   }
 
   void _onTapUp(TapUpDetails details) {
-    if (kIsWeb) {
-      _pawCtrl.reverse();
-      setState(() => _mousePos = null);
-    }
+    if (_isDesktopWeb) _pawCtrl.reverse();
     if (_gameOver) return;
 
     final pos = details.localPosition;
@@ -222,10 +226,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _onTapCancel() {
-    if (kIsWeb) {
-      _pawCtrl.reverse();
-      setState(() => _mousePos = null);
-    }
+    if (_isDesktopWeb) _pawCtrl.reverse();
   }
 
   int _comboPoints() {
@@ -310,8 +311,8 @@ class _GameScreenState extends State<GameScreen>
                             ),
                           ),
                         ),
-                      // Web paw cursor
-                      if (kIsWeb && _mousePos != null && !_gameOver)
+                      // Desktop-web paw cursor
+                      if (_isDesktopWeb && _mousePos != null && !_gameOver)
                         Positioned(
                           left: _mousePos!.dx - _pawSize / 2,
                           top: _mousePos!.dy - _pawSize / 2,
@@ -340,8 +341,8 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 );
 
-                // On web: wrap in MouseRegion to track position and hide system cursor
-                if (kIsWeb) {
+                // On desktop web: wrap in MouseRegion to track position and hide system cursor
+                if (_isDesktopWeb) {
                   arena = MouseRegion(
                     cursor: SystemMouseCursors.none,
                     onHover: (e) => setState(() => _mousePos = e.localPosition),

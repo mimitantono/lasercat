@@ -73,9 +73,8 @@ class _StartScreenState extends State<StartScreen>
     super.dispose();
   }
 
-  void _play() async {
-    await widget.sounds.warmUp();
-    if (!mounted) return;
+  void _play() {
+    widget.sounds.warmUp();
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => GameScreen(sounds: widget.sounds)),
