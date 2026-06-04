@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/difficulty.dart';
 import '../services/sound_service.dart';
 import 'game_screen.dart';
 
@@ -45,11 +47,16 @@ class _StartScreenState extends State<StartScreen>
   late AnimationController _fadeCtrl;
   late Animation<double> _fadeAnim;
   Timer? _msgTimer;
+  Difficulty _difficulty = Difficulty.officeCat;
+  final Map<Difficulty, int> _bestScores = {
+    for (final d in Difficulty.values) d: 0,
+  };
 
   @override
   void initState() {
     super.initState();
     _description = _descriptions[Random().nextInt(_descriptions.length)];
+    _loadBestScores();
 
     _fadeCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeIn);
@@ -73,12 +80,24 @@ class _StartScreenState extends State<StartScreen>
     super.dispose();
   }
 
+  Future<void> _loadBestScores() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      for (final d in Difficulty.values) {
+        _bestScores[d] = prefs.getInt(d.bestScoreKey) ?? 0;
+      }
+    });
+  }
+
   void _play() {
     widget.sounds.warmUp();
-    Navigator.pushReplacement(
+    Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => GameScreen(sounds: widget.sounds)),
-    );
+      MaterialPageRoute(
+        builder: (_) => GameScreen(sounds: widget.sounds, difficulty: _difficulty),
+      ),
+    ).then((_) => _loadBestScores());
   }
 
   @override
@@ -167,7 +186,13 @@ class _StartScreenState extends State<StartScreen>
               style: TextStyle(color: Colors.white24, fontSize: 12, letterSpacing: 0.5),
             ),
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 32),
+          _DifficultyPicker(
+            selected: _difficulty,
+            bestScores: _bestScores,
+            onSelect: (d) => setState(() => _difficulty = d),
+          ),
+          const SizedBox(height: 24),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -213,6 +238,80 @@ class _StartScreenState extends State<StartScreen>
           ),
         ],
       ),
+    );
+  }
+}
+
+class _DifficultyPicker extends StatelessWidget {
+  final Difficulty selected;
+  final Map<Difficulty, int> bestScores;
+  final ValueChanged<Difficulty> onSelect;
+
+  const _DifficultyPicker({
+    required this.selected,
+    required this.bestScores,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          children: Difficulty.values.map((d) {
+            final isSelected = d == selected;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => onSelect(d),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isSelected ? const Color(0xFF2A0A12) : const Color(0xFF1A1A1A),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isSelected ? const Color(0xFFFF1744) : const Color(0xFF333333),
+                      width: isSelected ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(d.emoji, style: const TextStyle(fontSize: 20)),
+                      const SizedBox(height: 4),
+                      Text(
+                        d.label,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: isSelected ? const Color(0xFFFF6B8B) : Colors.white54,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'best ${bestScores[d] ?? 0}',
+                        style: const TextStyle(
+                          color: Colors.white24,
+                          fontSize: 9,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          selected.description,
+          style: const TextStyle(color: Colors.white38, fontSize: 12, fontStyle: FontStyle.italic),
+        ),
+      ],
     );
   }
 }

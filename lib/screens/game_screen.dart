@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/difficulty.dart';
 import '../painters/laser_painter.dart';
 import '../painters/paw_painter.dart';
 import '../services/sound_service.dart';
@@ -22,7 +24,8 @@ class _LaserBehaviour {
 
 class GameScreen extends StatefulWidget {
   final SoundService sounds;
-  const GameScreen({super.key, required this.sounds});
+  final Difficulty difficulty;
+  const GameScreen({super.key, required this.sounds, required this.difficulty});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -37,8 +40,8 @@ class _GameScreenState extends State<GameScreen>
        defaultTargetPlatform == TargetPlatform.linux ||
        defaultTargetPlatform == TargetPlatform.macOS);
 
-  // Larger hit radius on desktop web — mouse is harder to aim than a finger
-  static final double _tapRadius = _isDesktopWeb ? 68.0 : 52.0;
+  // Base hit radius; multiplied by difficulty.tapRadiusBoost
+  double get _tapRadius => (_isDesktopWeb ? 68.0 : 52.0) * widget.difficulty.tapRadiusBoost;
   static const _pawSize = 68.0;
 
   final _rng = Random();
@@ -59,6 +62,7 @@ class _GameScreenState extends State<GameScreen>
   int _score = 0;
   int _combo = 0;
   int _highScore = 0;
+  int _prevHighAtStart = 0; // for "new best" detection
   bool _gameOver = false;
   double _timeLeft = 30;
 
@@ -82,7 +86,22 @@ class _GameScreenState extends State<GameScreen>
       CurvedAnimation(parent: _pawCtrl, curve: Curves.easeIn),
     );
 
+    _loadHighScore();
     WidgetsBinding.instance.addPostFrameCallback((_) => _startGame());
+  }
+
+  Future<void> _loadHighScore() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() => _highScore = prefs.getInt(widget.difficulty.bestScoreKey) ?? 0);
+    }
+  }
+
+  Future<void> _saveHighScore() async {
+    if (_score <= _highScore) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(widget.difficulty.bestScoreKey, _score);
+    if (mounted) setState(() => _highScore = _score);
   }
 
   // ── Behaviour scheduling ──────────────────────────────────────────────────
@@ -97,21 +116,26 @@ class _GameScreenState extends State<GameScreen>
   }
 
   _LaserBehaviour _nextBehaviour() {
+    final d = widget.difficulty;
     final speedMult = _speedMultiplier();
     final roll = _rng.nextDouble();
 
-    if (roll < 0.20) {
-      return _LaserBehaviour(_LaserState.pause, Duration(milliseconds: (700 / speedMult).round()));
-    } else if (roll < 0.50) {
+    final pauseEnd = d.pauseWeight;
+    final creepEnd = pauseEnd + d.creepWeight;
+    final dartEnd  = creepEnd + d.dartWeight;
+
+    if (roll < pauseEnd) {
+      return _LaserBehaviour(_LaserState.pause, Duration(milliseconds: (d.pauseMs / speedMult).round()));
+    } else if (roll < creepEnd) {
       return _LaserBehaviour(
         _LaserState.creep,
-        Duration(milliseconds: (900 / speedMult).round()),
+        Duration(milliseconds: (d.creepMs / speedMult).round()),
         _randomPoint(maxStep: 0.25),
       );
-    } else if (roll < 0.80) {
+    } else if (roll < dartEnd) {
       return _LaserBehaviour(
         _LaserState.dart,
-        Duration(milliseconds: (220 / speedMult).round()),
+        Duration(milliseconds: (d.dartMs / speedMult).round()),
         _randomPoint(minStep: 0.30),
       );
     } else {
@@ -119,7 +143,7 @@ class _GameScreenState extends State<GameScreen>
       _animateTo(micro, Duration(milliseconds: (120 / speedMult).round()));
       return _LaserBehaviour(
         _LaserState.tease,
-        Duration(milliseconds: (260 / speedMult).round()),
+        Duration(milliseconds: (d.teaseMs / speedMult).round()),
         _target,
       );
     }
@@ -127,7 +151,7 @@ class _GameScreenState extends State<GameScreen>
 
   double _speedMultiplier() {
     final elapsed = 30 - _timeLeft;
-    return 1.0 + (elapsed / 30) * 1.2;
+    return 1.0 + (elapsed / 30) * (widget.difficulty.speedRampMax - 1.0);
   }
 
   Offset _randomPoint({double minStep = 0, double maxStep = 1.0}) {
@@ -171,6 +195,7 @@ class _GameScreenState extends State<GameScreen>
       _combo = 0;
       _timeLeft = 30;
       _gameOver = false;
+      _prevHighAtStart = _highScore;
     });
 
     if (_arenaSize != Size.zero) {
@@ -192,7 +217,7 @@ class _GameScreenState extends State<GameScreen>
   void _endGame() {
     _behaviourTimer?.cancel();
     _moveCtrl.stop();
-    if (_score > _highScore) _highScore = _score;
+    _saveHighScore();
     widget.sounds.playMeow();
     setState(() => _gameOver = true);
   }
@@ -267,7 +292,13 @@ class _GameScreenState extends State<GameScreen>
       body: SafeArea(
         child: Column(
           children: [
-            _TopBar(score: _score, highScore: _highScore, timeLeft: _timeLeft, started: !_gameOver),
+            _TopBar(
+              score: _score,
+              highScore: _highScore,
+              timeLeft: _timeLeft,
+              started: !_gameOver,
+              difficultyLabel: widget.difficulty.label,
+            ),
             Expanded(
               child: LayoutBuilder(builder: (context, constraints) {
                 _arenaSize = Size(constraints.maxWidth, constraints.maxHeight);
@@ -291,7 +322,10 @@ class _GameScreenState extends State<GameScreen>
                       if (!_gameOver)
                         CustomPaint(
                           size: Size(constraints.maxWidth, constraints.maxHeight),
-                          painter: LaserPainter(position: _current),
+                          painter: LaserPainter(
+                            position: _current,
+                            glowRadius: widget.difficulty.laserRadius,
+                          ),
                         ),
                       if (_flashLabel != null)
                         Positioned(
@@ -333,7 +367,7 @@ class _GameScreenState extends State<GameScreen>
                         _GameOverOverlay(
                           score: _score,
                           highScore: _highScore,
-                          isNewHigh: _score > 0 && _score >= _highScore,
+                          isNewHigh: _score > 0 && _score > _prevHighAtStart,
                           onPlayAgain: _startGame,
                           onMenu: () => Navigator.pop(context),
                         ),
@@ -368,8 +402,15 @@ class _TopBar extends StatelessWidget {
   final int highScore;
   final double timeLeft;
   final bool started;
+  final String difficultyLabel;
 
-  const _TopBar({required this.score, required this.highScore, required this.timeLeft, required this.started});
+  const _TopBar({
+    required this.score,
+    required this.highScore,
+    required this.timeLeft,
+    required this.started,
+    required this.difficultyLabel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -380,7 +421,8 @@ class _TopBar extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('SCORE', style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1.5)),
+            Text(difficultyLabel.toUpperCase(),
+                style: const TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1.5)),
             Text('$score', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
           ]),
           if (started)
