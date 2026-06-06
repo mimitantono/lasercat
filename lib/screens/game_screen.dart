@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../leaderboard/leaderboard_service.dart';
+import '../leaderboard/new_high_score_dialog.dart';
 import '../models/difficulty.dart';
 import '../painters/laser_painter.dart';
 import '../painters/paw_painter.dart';
@@ -214,12 +216,43 @@ class _GameScreenState extends State<GameScreen>
     });
   }
 
+  static const _nameKey = 'leaderboard_player_name';
+  static const _countryKey = 'leaderboard_country_code';
+
   void _endGame() {
     _behaviourTimer?.cancel();
     _moveCtrl.stop();
     _saveHighScore();
     widget.sounds.playMeow();
     setState(() => _gameOver = true);
+    _maybeSubmitToLeaderboard();
+  }
+
+  Future<void> _maybeSubmitToLeaderboard() async {
+    final score = _score;
+    final difficulty = widget.difficulty.name;
+    bool qualifies = false;
+    try {
+      qualifies = await LeaderboardService.qualifies(
+        gameId: 'lasercat',
+        difficulty: difficulty,
+        score: score,
+      );
+    } catch (_) {}
+    if (!mounted || !qualifies) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    await showNewHighScoreDialog(
+      context,
+      gameId: 'lasercat',
+      difficulty: difficulty,
+      score: score,
+      rememberedName: prefs.getString(_nameKey),
+      rememberedCountryCode: prefs.getString(_countryKey),
+      onNameRemembered: (n) => prefs.setString(_nameKey, n),
+      onCountryRemembered: (c) => prefs.setString(_countryKey, c),
+    );
   }
 
   // ── Tap / mouse handling ──────────────────────────────────────────────────

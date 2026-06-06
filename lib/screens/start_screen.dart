@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../leaderboard/leaderboard_screen.dart';
 import '../models/difficulty.dart';
 import '../services/sound_service.dart';
 import 'game_screen.dart';
@@ -231,7 +232,33 @@ class _StartScreenState extends State<StartScreen>
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => LeaderboardScreen(
+                  gameId: 'lasercat',
+                  difficulty: _difficulty.name,
+                  difficultyTabs: [
+                    for (final d in Difficulty.values)
+                      (label: d.label, value: d.name),
+                  ],
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.emoji_events, color: Color(0xFFFFD700), size: 18),
+            label: const Text(
+              'LEADERBOARD',
+              style: TextStyle(
+                color: Color(0xFFFFD700),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           const Text(
             'Tap the dot  •  Combos score more  •  30 seconds',
             style: TextStyle(color: Colors.white24, fontSize: 12),
